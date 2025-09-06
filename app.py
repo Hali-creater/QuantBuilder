@@ -10,13 +10,18 @@ import pandas as pd
 
 def handle_backtester_tab(strategy_def):
     """Handles the logic for the backtester tab."""
+    st.header("Run a Backtest")
+    if 'broker' not in st.session_state or st.session_state.broker is None:
+        st.warning("Please connect to your Alpaca account on the 'Paper Trading' tab to fetch data for backtesting.")
+        return
+
     ticker, start_date, end_date, run_button = backtester_params_ui()
     if run_button:
         if not ticker:
             st.error("Please enter a stock ticker.")
             return
         with st.spinner('Running backtest...'):
-            data = fetch_data(ticker, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'))
+            data = fetch_data(st.session_state.broker.api, ticker, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'))
             if data is not None and not data.empty:
                 signals = generate_signals(data, strategy_def)
                 portfolio, metrics = run_backtest(signals)
@@ -26,6 +31,7 @@ def handle_backtester_tab(strategy_def):
 
 def handle_paper_trading_tab(strategy_def):
     """Handles the logic for the paper trading tab."""
+    st.header("Paper Trading with Alpaca")
     if 'broker' not in st.session_state:
         st.session_state.broker = None
 
@@ -35,33 +41,31 @@ def handle_paper_trading_tab(strategy_def):
             if not api_key or not secret_key:
                 st.error("Please enter both API Key and Secret Key.")
             else:
-                broker = AlpacaBroker(api_key, secret_key)
-                if broker.connect():
-                    st.session_state.broker = broker
-                    st.success("Successfully connected to Alpaca!")
-                    st.rerun()
-                else:
-                    st.error("Connection to Alpaca failed. Check your API keys.")
+                with st.spinner("Connecting to Alpaca..."):
+                    broker = AlpacaBroker(api_key, secret_key)
+                    if broker.connect():
+                        st.session_state.broker = broker
+                        st.success("Successfully connected to Alpaca!")
+                        st.rerun()
+                    else:
+                        st.error("Connection to Alpaca failed. Check your API keys.")
     else:
         account_info = st.session_state.broker.get_account_info()
         if account_info:
             ticker, qty, execute_button = paper_trading_ui(account_info, strategy_def)
             if execute_button:
                 with st.spinner("Checking strategy and executing trade..."):
-                    # Fetch latest data (e.g., last 100 days to calculate indicators)
-                    live_data = fetch_data(ticker, pd.Timestamp.now() - pd.Timedelta(days=100), pd.Timestamp.now())
+                    live_data = fetch_data(st.session_state.broker.api, ticker, pd.Timestamp.now() - pd.Timedelta(days=100), pd.Timestamp.now())
                     if live_data is not None:
-                        # Generate signals on the latest data
                         signals = generate_signals(live_data, strategy_def)
                         latest_signal = signals['positions'].iloc[-1]
-
                         position = st.session_state.broker.get_position(ticker)
 
-                        if latest_signal == 1.0 and position is None: # Buy signal and no position
+                        if latest_signal == 1.0 and position is None:
                             order = st.session_state.broker.place_order(ticker, qty, 'buy')
                             st.success(f"Buy order for {qty} shares of {ticker} placed successfully!")
                             st.write(order)
-                        elif latest_signal == -1.0 and position is not None: # Sell signal and have a position
+                        elif latest_signal == -1.0 and position is not None:
                             order = st.session_state.broker.place_order(ticker, abs(int(position.qty)), 'sell')
                             st.success(f"Sell order for {abs(int(position.qty))} shares of {ticker} placed successfully!")
                             st.write(order)
@@ -72,6 +76,7 @@ def handle_paper_trading_tab(strategy_def):
 
 def main():
     """Main function to run the Streamlit application."""
+    st.set_page_config(layout="wide")
     db.init_db()
 
     if 'authenticated' not in st.session_state:
@@ -79,7 +84,6 @@ def main():
 
     if not st.session_state.authenticated:
         action, username, password = authentication_ui()
-        # ... (auth logic as before)
         if action == "signup":
             if not username or not password: st.error("Username and password cannot be empty.")
             elif db.add_user(username, password): st.success("Account created! Please login.")
@@ -99,10 +103,8 @@ def main():
 
         st.title("Algorithmic Trading Platform")
 
-        # General Strategy Builder is always visible
         strategy_def = strategy_builder_ui()
 
-        # Tabs for different functionalities
         backtester_tab, paper_trader_tab = st.tabs(["Backtester", "Paper Trading"])
 
         with backtester_tab:
